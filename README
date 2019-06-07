@@ -1,0 +1,9 @@
+Experimental work on probabilistic genotyping, with no particular structure or
+order.
+
+Most of these are Python 3 scripts that will tell you what they do if you pass
+--help. Documentation aside from the source code remains to be done.
+
+All source files here are released under the GNU General Public License,
+version 3, or, at your option, any later version. See LICENSE for more
+information.

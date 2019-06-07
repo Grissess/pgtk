@@ -1,0 +1,9 @@
+*.csv
+*.data
+*.gp
+*.png
+*.svg
+*.ps
+*.zip
+*.tar.gz
+__pycache__
