@@ -174,8 +174,6 @@ ident(x) = x
     pf.close()
 elif args.mode == 'percentile':
     print('Writing data files...')
-    cur.execute('SELECT count(*) FROM series WHERE idx = 0')
-    total = cur.fetchone()[0]
     plots = []
     for idx, sdesc in enumerate(args.series):
         if idx == 0:
@@ -184,6 +182,8 @@ elif args.mode == 'percentile':
         df = open(dfn, 'w', 4194304)
         df.write(f'# series {sdesc} percentile')
         kidx = 0
+        cur.execute('SELECT count(*) FROM series WHERE idx = ?', (idx,))
+        total = cur.fetchone()[0]
         for row in cur.execute('SELECT s2.value - s1.value FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ? ORDER BY (s2.value - s1.value)', (idx,)):
             if args.every is not None and kidx % args.every == 0:
                 print(f'Series {idx} ({sdesc}): writeout progress {kidx}...')
