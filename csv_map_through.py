@@ -37,4 +37,4 @@ for row in rdr:
     row[args.column] = mappings.get(row[args.column], args.default)
     out.writerow(row)
 
-print(f'Done, {skips} skipped.')
+print(f'Done, {skips} skipped.', file=sys.stderr)
