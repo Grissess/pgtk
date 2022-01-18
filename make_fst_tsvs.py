@@ -82,6 +82,8 @@ for cn, rows in cases.items():
         for rnum, rep in enumerate(REPS):
             alleles = row[rep]
             if not alleles:
+                # FST needs an empty line, even in this case
+                fo.write('\t'.join([locus, str(rnum + 1)]) + '\n')
                 continue
             alleles = alleles.split(';')
             if len(alleles) > 8:
@@ -108,7 +110,7 @@ for cn, rows in cases.items():
             matches += 1
             if fo is None:
                 fo = open(os.path.join(basedir, f'contributor_{cnum+1}.tsv'), 'w')
-                fo.write('\t'.join(['Locus'] + ['Allele {i+1}' for i in range(2)]) + '\n')
+                fo.write('\t'.join(['Locus'] + [f'Allele {i+1}' for i in range(2)]) + '\n')
             fo.write('\t'.join([locus] + alleles) + '\n')
         if fo is not None:
             if matches != len(rows):

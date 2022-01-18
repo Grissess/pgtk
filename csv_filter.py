@@ -16,10 +16,15 @@ pred = eval(args.predicate)
 
 rdr = csv.DictReader(open(args.csv))
 out = None
+num, tot = 0, 0
 
 for row in rdr:
+    tot += 1
     if out is None:
         out = csv.DictWriter(fo, rdr.fieldnames)
         out.writeheader()
     if pred(row):
+        num += 1
         out.writerow(row)
+
+print(f'{num} rows / {tot} total processed.', file=sys.stderr)
