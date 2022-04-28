@@ -14,7 +14,7 @@ parser.add_argument('--version', '-V', action='store_true', help='Instead of doi
 args = parser.parse_args()
 
 if args.version:
-    print('CSV to TSV converter tool version', '.'.join(map(str, __version__)))
+    print('CSV sibling breakout tool version', '.'.join(map(str, __version__)))
     print(admonitions.LICENSE)
     exit()
 
