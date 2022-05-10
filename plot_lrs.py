@@ -249,39 +249,6 @@ if args.mode == 'scatter':
     pstyles = [args.pts[i % len(args.pts)] for i in range(len(args.series))]
     print(f'generated {len(keys)} keys', file=sys.stderr)
 
-    print('Writing data files...')
-    for idx, sdesc in enumerate(args.series):
-        if not args.no_sanity:
-            cur.execute('SELECT cnum, contr FROM series WHERE idx=?', (idx,))
-            dkeys = set(cur.fetchall())
-            nx, ny = len(keyset - dkeys), len(dkeys - keyset)
-            if nx:
-                print(f'WARN: series {args.series[idx]} is missing {nx} keys', file=sys.stderr)
-            if ny:
-                print(f'WARN: series {args.series[idx]} has {ny} keys that won\'t be displayed', file=sys.stderr)
-
-        dfn = args.basename + f'.{idx}.data'
-        if idx != 0:
-            plots.append(f'"{dfn}" with points lw {args.dot_size} pt {pstyles[idx-1]} lc rgb "{colors[idx-1]}" title "{titles[idx]}"')
-        df = open(dfn, 'w', 4194304)  # 4M buffer
-        df.write(f'# series {args.series[0]} vs {args.series[idx]}\n')
-        for kidx, k in enumerate(keys):
-            if args.every is not None and kidx % args.every == 0:
-                print(f'Series {idx} ({sdesc}): writeout progress {kidx}...')
-            cur.execute('SELECT value FROM series WHERE idx=? AND cnum=? AND contr=?', (idx,) + k)
-            v = cur.fetchone()
-            if v is None:
-                continue
-            v = v[0]
-            cur.execute('SELECT value FROM series WHERE idx=0 AND cnum=? AND contr=?', k)
-            v0 = cur.fetchone()[0]  # Shouldn't fail
-
-            df.write(f'{v0}\t{v}\n')
-        print(f'Series {idx} ({sdesc}) done writing')
-        df.close()
-
-    plots.append(f'ident(x) with lines lc rgb "#77000000" lw 1 title "y=x ({titles[0]})"')
-
     print('Writing plot file...')
     pf = open(args.basename + '.gp', 'w')
     pf.write(f'''set terminal {args.terminal}
@@ -321,6 +288,40 @@ ident(x) = x
         pf.write(f'set notitle\n')
     else:
         pf.write(f'set title "{title}"\n')
+
+    print('Writing data...')
+    for idx, sdesc in enumerate(args.series):
+        if not args.no_sanity:
+            cur.execute('SELECT cnum, contr FROM series WHERE idx=?', (idx,))
+            dkeys = set(cur.fetchall())
+            nx, ny = len(keyset - dkeys), len(dkeys - keyset)
+            if nx:
+                print(f'WARN: series {args.series[idx]} is missing {nx} keys', file=sys.stderr)
+            if ny:
+                print(f'WARN: series {args.series[idx]} has {ny} keys that won\'t be displayed', file=sys.stderr)
+
+        dvar = f'ser{idx}'
+        if idx != 0:
+            plots.append(f'${dvar} with points lw {args.dot_size} pt {pstyles[idx-1]} lc rgb "{colors[idx-1]}" title "{titles[idx]}"')
+        pf.write(f'${dvar} <<EOD\n')
+        pf.write(f'# series {args.series[0]} vs {args.series[idx]}\n')
+        for kidx, k in enumerate(keys):
+            if args.every is not None and kidx % args.every == 0:
+                print(f'Series {idx} ({sdesc}): writeout progress {kidx}...')
+            cur.execute('SELECT value FROM series WHERE idx=? AND cnum=? AND contr=?', (idx,) + k)
+            v = cur.fetchone()
+            if v is None:
+                continue
+            v = v[0]
+            cur.execute('SELECT value FROM series WHERE idx=0 AND cnum=? AND contr=?', k)
+            v0 = cur.fetchone()[0]  # Shouldn't fail
+
+            pf.write(f'{v0}\t{v}\n')
+        pf.write('EOD\n')
+        print(f'Series {idx} ({sdesc}) done writing')
+
+    plots.append(f'ident(x) with lines lc rgb "#77000000" lw 1 title "y=x ({titles[0]})"')
+
     if args.veq and veqs:
         for name, val, col in veqs:
             plots.append(f'{val} title {name!r} lc rgbcolor "{col}"')
@@ -328,85 +329,6 @@ ident(x) = x
     pf.close()
 elif args.mode in ('percentile', 'percentile-nocmp'):
     comparing = (args.mode == 'percentile')
-    print('Writing data files...')
-    plots = []
-    labels = []
-    for idx, sdesc in enumerate(args.series):
-        if idx == 0 and comparing:
-            continue
-        dfn = args.basename + f'.{idx}.data'
-        df = open(dfn, 'w', 4194304)
-        df.write(f'# series {sdesc} percentile\n')
-        kidx = 0
-        zpt = None
-        zpts = [None for i in veqs]
-        if comparing:
-            cur.execute('SELECT count(*) FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ?', (idx,))
-        else:
-            cur.execute('SELECT count(*) FROM series WHERE idx = ?', (idx,))
-        total = cur.fetchone()[0]
-        write_twice = total == 1
-        saw_neg = None
-        saw_negs = [None for i in veqs]
-        crossings = series_crossings.get(idx, [])
-        c_negs = [None for i in crossings]
-        cpts = [None for i in crossings]
-        for row in cur.execute(
-                'SELECT s2.value - s1.value FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ? ORDER BY (s2.value - s1.value)'
-                if comparing else
-                'SELECT value FROM series WHERE idx = ? ORDER BY value', (idx,)):
-            if args.every is not None and kidx % args.every == 0:
-                print(f'Series {idx} ({sdesc}): writeout progress {kidx}/{total}...')
-            df.write(f'{2*(kidx/(total-1))-1}\t{row[0]}\n')
-            if write_twice:
-                df.write(f'1\t{row[0]}\n')
-                break
-            if args.zc:
-                if saw_neg is False and row[0] >= 0:
-                    zpt = (kidx/(total-1), row[0])
-                saw_neg = row[0] >= 0
-            if args.zc_veq:
-                for i, elem in enumerate(veqs):
-                    val = elem[1]
-                    if saw_negs[i] is False and (row[0]-val) >= 0:
-                        zpts[i] = (kidx/(total-1), row[0])
-                    saw_negs[i] = (row[0]-val) >= 0
-            if crossings:
-                for i, parts in enumerate(crossings):
-                    val = parts[0]
-                    if c_negs[i] is False and row[0] >= val:
-                        cpts[i] = (kidx/(total-1), row[0])
-                    c_negs[i] = row[0] >= val
-            kidx += 1
-        ddfn = args.basename + f'.{idx}.dots.data'
-        ddf = open(ddfn, 'w', 4194304)
-        ddf.write(f'#series {sdesc} points\n')
-        for quart in (0, total // 4, total // 2, 3 * total // 4, total - 1):
-            cur.execute(
-                'SELECT s2.value - s1.value FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ? ORDER BY (s2.value - s1.value) LIMIT 1 OFFSET ?'
-                if comparing else
-                'SELECT value FROM series WHERE idx = ? ORDER BY value LIMIT 1 OFFSET ?', (idx, quart))
-            ddf.write(f'{2*(quart/(total-1))-1}\t{cur.fetchone()[0]}\n')
-        print(f'Series {idx} ({sdesc}) done writing {total} points')
-        effidx = idx - 1 if comparing else idx
-        style = args.quartile_pts[effidx % len(args.quartile_pts)]
-        plots.append(f'"{dfn}" using 1:2:(0) with linespoints pt {style} pi {total} ps variable lc rgb "{colors[idx-1]}" title "{titles[idx]}"')
-        plots.append(f'"{ddfn}" with points lc rgb "{colors[idx-1]}" pt {style} notitle')
-        chroff = -0.5 if idx % 2 == 0 else 0.0
-        if args.zc and zpt is not None:
-            labels.append(f'"{100*zpt[0]:.3f}%" at {2*zpt[0]-1},{zpt[1]} tc rgb "{colors[idx-1]}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{colors[idx-1]}"')
-        if args.zc_veq and zpts:
-            for i, pt in enumerate(zpts):
-                if pt is None:
-                    continue
-                labels.append(f'"{100*pt[0]:.3f}%" at {2*pt[0]-1},{pt[1]} tc rgb "{colors[idx-1]}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{colors[idx-1]}"')
-        if crossings:
-            for i, pt in enumerate(cpts):
-                if pt is None:
-                    continue
-                val, lbl, col = crossings[i]
-                labels.append(f'"{lbl},{100*pt[0]:.3f}%" at {2*pt[0]-1},{pt[1]} right tc rgb "{col}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{col}"')
-
     print('Writing plot file...')
     pf = open(args.basename + '.gp', 'w')
     pf.write(f'''set terminal {args.terminal}
@@ -446,6 +368,91 @@ set xrange [-1:1]
         pf.write(f'set notitle\n')
     else:
         pf.write(f'set title "{title}"\n')
+    plots = []
+    labels = []
+
+    print('Writing data...')
+    for idx, sdesc in enumerate(args.series):
+        if idx == 0 and comparing:
+            continue
+        kidx = 0
+        zpt = None
+        zpts = [None for i in veqs]
+        if comparing:
+            cur.execute('SELECT count(*) FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ?', (idx,))
+        else:
+            cur.execute('SELECT count(*) FROM series WHERE idx = ?', (idx,))
+        total = cur.fetchone()[0]
+        if total == 0:
+            print('WARN: Series {idx} ({sdesc}) has no data and will not be plotted')
+            continue
+        dvar = f'ser{idx}'
+        pf.write(f'${dvar} <<EOD\n')
+        pf.write(f'# series {sdesc} percentile\n')
+        write_twice = total == 1
+        saw_neg = None
+        saw_negs = [None for i in veqs]
+        crossings = series_crossings.get(idx, [])
+        c_negs = [None for i in crossings]
+        cpts = [None for i in crossings]
+        for row in cur.execute(
+                'SELECT s2.value - s1.value FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ? ORDER BY (s2.value - s1.value)'
+                if comparing else
+                'SELECT value FROM series WHERE idx = ? ORDER BY value', (idx,)):
+            if args.every is not None and kidx % args.every == 0:
+                print(f'Series {idx} ({sdesc}): writeout progress {kidx}/{total}...')
+            pf.write(f'{2*(kidx/(total-1))-1}\t{row[0]}\n')
+            if write_twice:
+                df.write(f'1\t{row[0]}\n')
+                break
+            if args.zc:
+                if saw_neg is False and row[0] >= 0:
+                    zpt = (kidx/(total-1), row[0])
+                saw_neg = row[0] >= 0
+            if args.zc_veq:
+                for i, elem in enumerate(veqs):
+                    val = elem[1]
+                    if saw_negs[i] is False and (row[0]-val) >= 0:
+                        zpts[i] = (kidx/(total-1), row[0])
+                    saw_negs[i] = (row[0]-val) >= 0
+            if crossings:
+                for i, parts in enumerate(crossings):
+                    val = parts[0]
+                    if c_negs[i] is False and row[0] >= val:
+                        cpts[i] = (kidx/(total-1), row[0])
+                    c_negs[i] = row[0] >= val
+            kidx += 1
+        pf.write('EOD\n')
+        ddvar = f'ser{idx}d'
+        pf.write(f'${ddvar} <<EOD\n')
+        pf.write(f'#series {sdesc} points\n')
+        for quart in (0, total // 4, total // 2, 3 * total // 4, total - 1):
+            cur.execute(
+                'SELECT s2.value - s1.value FROM series AS s1 JOIN series AS s2 USING (cnum, contr) WHERE s1.idx = 0 AND s2.idx = ? ORDER BY (s2.value - s1.value) LIMIT 1 OFFSET ?'
+                if comparing else
+                'SELECT value FROM series WHERE idx = ? ORDER BY value LIMIT 1 OFFSET ?', (idx, quart))
+            pf.write(f'{2*(quart/(total-1))-1}\t{cur.fetchone()[0]}\n')
+        pf.write('EOD\n')
+        print(f'Series {idx} ({sdesc}) done writing {total} points')
+        effidx = idx - 1 if comparing else idx
+        style = args.quartile_pts[effidx % len(args.quartile_pts)]
+        plots.append(f'${dvar} using 1:2:(0) with linespoints pt {style} pi {total} ps variable lc rgb "{colors[idx-1]}" title "{titles[idx]}"')
+        plots.append(f'${ddvar} with points lc rgb "{colors[idx-1]}" pt {style} notitle')
+        chroff = -0.5 if idx % 2 == 0 else 0.0
+        if args.zc and zpt is not None:
+            labels.append(f'"{100*zpt[0]:.3f}%" at {2*zpt[0]-1},{zpt[1]} tc rgb "{colors[idx-1]}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{colors[idx-1]}"')
+        if args.zc_veq and zpts:
+            for i, pt in enumerate(zpts):
+                if pt is None:
+                    continue
+                labels.append(f'"{100*pt[0]:.3f}%" at {2*pt[0]-1},{pt[1]} tc rgb "{colors[idx-1]}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{colors[idx-1]}"')
+        if crossings:
+            for i, pt in enumerate(cpts):
+                if pt is None:
+                    continue
+                val, lbl, col = crossings[i]
+                labels.append(f'"{lbl},{100*pt[0]:.3f}%" at {2*pt[0]-1},{pt[1]} right tc rgb "{col}" font ",6" offset character 0,{chroff} point pt 1 lc rgb "{col}"')
+
     for lab in labels:
         pf.write(f'set label {lab}\n')
     if args.veq and veqs:
